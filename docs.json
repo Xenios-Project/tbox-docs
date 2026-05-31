@@ -39,7 +39,7 @@
       ]
     },
     "directory": "card",
-    "pages": [
+    "groups": [
       {
         "group": "Platform",
         "icon": "layers",
@@ -74,7 +74,12 @@
           "integrations/webhooks/configure"
         ]
       },
-      "privacy-policy"
+      {
+        "group": "Legal",
+        "pages": [
+          "privacy-policy"
+        ]
+      }
     ]
   },
   "logo": {

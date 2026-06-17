@@ -1,0 +1,102 @@
+---
+title: "Security & Best Practices"
+description: "Protect your secret, rotate keys, restrict by IP, and follow least-privilege."
+---
+
+The API is built around a few defensive guarantees — replay-proof signed
+requests, per-key claims, IP allowlists, and key rotation. Here's how to use
+them well.
+
+## Protect your secret
+
+<Warning>
+  Your API secret is the only thing standing between an attacker and your
+  account. Treat it like a password.
+</Warning>
+
+- **Never** commit it, log it, or ship it in client-side code. Only the
+  `X-API-KEY` id is safe to log — the secret stays server-side.
+- Store it in a secret manager or environment variable, not in source.
+- Scope it to one environment.
+
+## Least-privilege claims
+
+Each key carries explicit **claims** that gate every route — calling one without
+its claim returns `403`. Request only what an integration needs:
+
+| Claim | Grants |
+| --- | --- |
+| `read:market-data` | Products, assets, order book, candles |
+| `read:account` | Your fee and account settings |
+| `read:orders` | Read your orders |
+| `write:orders` | Place orders |
+| `cancel:orders` | Cancel orders |
+| `read:assets` | Wallet balances, deposit reads |
+
+A read-only analytics service should never hold `write:orders`. Use separate
+keys for separate jobs so you can revoke one without disrupting the rest.
+
+## Key rotation
+
+Each key supports a **primary** and a temporary **secondary** secret so you can
+rotate with zero downtime:
+
+<Steps>
+  <Step title="Request a rotation">
+    A new primary secret is issued; your old secret becomes the secondary and
+    keeps working during an overlap window.
+  </Step>
+  <Step title="Deploy the new secret">
+    Update your secret store and roll out. Both secrets verify during the overlap.
+  </Step>
+  <Step title="Watch for the warning header">
+    Any request still signed with the **old** secret comes back with:
+
+    ```
+    X-API-Key-Rotation-Warning: Using deprecated key. Rotate before <timestamp>
+    ```
+
+    Treat that header as a hard deadline — the secondary secret stops working
+    after it.
+  </Step>
+</Steps>
+
+## IP allowlisting
+
+Your key can be restricted to a set of source IPs. Requests from any other
+address are rejected even with a valid signature.
+
+```json
+{ "ipWhitelist": ["203.0.113.10", "203.0.113.11"] }
+```
+
+<Note>
+  Matching is **exact** per address (IPv4 and IPv6) — CIDR ranges are not yet
+  supported, so list each egress IP explicitly. Behind a proxy/load balancer the
+  gateway uses the first address in `X-Forwarded-For`, so make sure your real
+  egress IP reaches it.
+</Note>
+
+Contact [support@xeniosproject.com](mailto:support@xeniosproject.com) to set or
+change your allowlist.
+
+## Built-in request hardening
+
+You get these for free by following [Authentication](/guides/authentication):
+
+- **Replay protection** — every request carries a one-time `nonce`; reuse is
+  rejected.
+- **Freshness** — the `X-API-TIMESTAMP` must be within ~30 seconds of server
+  time, so a captured request expires quickly.
+- **Signed Content-Type** — the header is part of the signature, preventing
+  content-type confusion.
+- **Inactive keys** — a deactivated key is refused immediately.
+
+## Versioning & deprecation
+
+- The API is **URL-versioned** under `/api/v1/…`. Backwards-incompatible changes
+  ship under a new version prefix, never silently within `v1`.
+- Notable changes are recorded in the changelog — check it before
+  relying on new behaviour.
+- Time-sensitive deprecations (like a rotated key nearing expiry) are surfaced
+  in response headers so your client can react automatically.

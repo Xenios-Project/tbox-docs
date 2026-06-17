@@ -1,0 +1,205 @@
+---
+title: "Authentication"
+description: "Sign every request with HMAC-SHA256: headers, canonical string, and rules."
+---
+
+Every protected endpoint — and the WebSocket handshake — is authenticated with
+an **HMAC-SHA256 request signature**. There are no session cookies or bearer
+tokens: each request carries its own signature, timestamp and nonce, so a
+captured request can't be replayed.
+
+## Credentials
+
+You receive two values during onboarding:
+
+| Value | Header | Notes |
+| --- | --- | --- |
+| **API key id** | `X-API-KEY` | Public identifier, looks like `api_xenios_…`. Safe to log. |
+| **API secret** | _never sent_ | Used only to compute the signature. Store it in a secret manager. |
+
+The secret never travels over the wire — only the signature derived from it.
+
+<Warning>
+  Never expose your API secret in client-side code or commit it to version
+  control. Keep it in a secret manager or environment variable.
+</Warning>
+
+## Required headers
+
+Send these on every authenticated request:
+
+| Header | Value |
+| --- | --- |
+| `X-API-KEY` | Your API key id. |
+| `X-API-TIMESTAMP` | Current Unix time in **milliseconds** (`Date.now()`). |
+| `X-API-NONCE` | A unique value per request (e.g. a UUID v4). Never reuse one. |
+| `X-API-SIGNATURE` | Hex-encoded HMAC-SHA256 of the canonical string (below). |
+| `Content-Type` | `application/json`. It is part of the signature, so always send it. |
+
+## The canonical string
+
+The signature is computed over a deterministic string built from six fields
+joined by newline (`\n`), **in this exact order**:
+
+```
+timestamp + "\n" +
+nonce + "\n" +
+METHOD + "\n" +
+path + "\n" +
+content-type + "\n" +
+sha256_hex(rawBody)
+```
+
+Rules — get these exactly right or the signature won't match:
+
+- **timestamp / nonce** — the same values you put in the headers.
+- **METHOD** — uppercased (`GET`, `POST`, `PATCH`, `DELETE`).
+- **path** — the request path **without** the query string or fragment, e.g.
+  `/api/v1/trading/order`. Collapse duplicate slashes.
+- **content-type** — lowercased, e.g. `application/json`.
+- **body hash** — SHA-256 of the **raw** request body bytes (before any JSON
+  re-encoding), hex-encoded. For requests with no body (most `GET`s), hash the
+  empty string.
+
+Then:
+
+```
+signature = HMAC_SHA256(secret, canonical)   // hex-encoded
+```
+
+## Validation window
+
+- The timestamp must be within **30 seconds** of server time — sync your clock.
+- Each nonce may be used **once**; replays are rejected.
+
+## Authorization (claims)
+
+Authentication proves *who* you are; **claims** decide *what* you can do. Your
+API key carries a set of claims: `read:market-data` (products, assets,
+candles), `read:account` (your fee + settings), `read:orders`, `write:orders`,
+`cancel:orders`, `read:assets` (wallet balances). Calling a route you lack the
+claim for returns **403** even with a valid signature.
+
+## Reference implementation
+
+<CodeGroup>
+
+```js Node.js
+import crypto from 'node:crypto';
+
+function buildAuthHeaders({ secret, keyId, method, path, body = '', contentType = 'application/json' }) {
+  const timestamp = Date.now().toString();
+  const nonce = crypto.randomUUID();
+
+  const bodyHash = crypto.createHash('sha256').update(body, 'utf8').digest('hex');
+
+  const canonical = [
+    timestamp,
+    nonce,
+    method.toUpperCase(),
+    path.split('?')[0],            // strip query string
+    contentType.toLowerCase(),
+    bodyHash,
+  ].join('\n');
+
+  const signature = crypto.createHmac('sha256', secret).update(canonical, 'utf8').digest('hex');
+
+  return {
+    'X-API-KEY': keyId,
+    'X-API-TIMESTAMP': timestamp,
+    'X-API-NONCE': nonce,
+    'X-API-SIGNATURE': signature,
+    'Content-Type': contentType,
+  };
+}
+
+// Example: place a limit order
+const base = 'https://<your-host>/api/v1/trading';
+const path = '/api/v1/trading/order';
+const body = JSON.stringify({
+  side: 'BUY',
+  type: 'LIMIT',
+  base_quantity: '0.00006483',
+  price: '77127.23',
+  product: 'BTC-USD',
+  client_order_id: crypto.randomUUID(),
+});
+
+const headers = buildAuthHeaders({
+  secret: process.env.XENIOS_API_SECRET,
+  keyId: process.env.XENIOS_API_KEY,
+  method: 'POST',
+  path,
+  body,
+});
+
+const res = await fetch(base + '/order', { method: 'POST', headers, body });
+console.log(res.status, await res.json());
+```
+
+```python Python
+import hashlib, hmac, json, os, time, uuid
+import requests
+
+def build_auth_headers(secret, key_id, method, path, body="", content_type="application/json"):
+    timestamp = str(int(time.time() * 1000))          # Unix MILLISECONDS
+    nonce = str(uuid.uuid4())                          # unique per request
+    body_hash = hashlib.sha256(body.encode()).hexdigest()
+    canonical = "\n".join([
+        timestamp,
+        nonce,
+        method.upper(),
+        path.split("?")[0],                            # strip query string
+        content_type.lower(),
+        body_hash,
+    ])
+    signature = hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+    return {
+        "X-API-KEY": key_id,
+        "X-API-TIMESTAMP": timestamp,
+        "X-API-NONCE": nonce,
+        "X-API-SIGNATURE": signature,
+        "Content-Type": content_type,
+    }
+
+# Example: place a limit order
+base = "https://<your-host>/api/v1/trading"
+path = "/api/v1/trading/order"
+body = json.dumps({
+    "side": "BUY",
+    "type": "LIMIT",
+    "base_quantity": "0.00006483",
+    "price": "77127.23",
+    "product": "BTC-USD",
+    "client_order_id": str(uuid.uuid4()),
+})
+
+headers = build_auth_headers(
+    os.environ["XENIOS_API_SECRET"],
+    os.environ["XENIOS_API_KEY"],
+    "POST", path, body,
+)
+
+res = requests.post(base + "/order", headers=headers, data=body)
+print(res.status_code, res.json())
+```
+
+</CodeGroup>
+
+<Note>
+  `path` is what the gateway receives (`/api/v1/trading/order`), which is the
+  full path of the URL you call — not just `/order`.
+</Note>
+
+## Common failures
+
+| Symptom | Likely cause |
+| --- | --- |
+| `401` "Missing required headers" | One of the four `X-API-*` headers is absent. |
+| `401` "Invalid HMAC signature" | Canonical string mismatch — check method case, path (query stripped), content-type case, or that you hashed the **raw** body. |
+| `401` timestamp/stale | Clock skew > 30s, or timestamp not in milliseconds. |
+| `401` nonce | Nonce reused — generate a fresh one per request. |
+| `403` | Valid signature but your key lacks the required claim for that route. |
+
+See [Errors & Rate Limits](/guides/errors) for the full status-code reference,
+and [WebSockets](/guides/websockets) for signing the socket handshake.

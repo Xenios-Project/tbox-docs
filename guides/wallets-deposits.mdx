@@ -1,0 +1,91 @@
+---
+title: "Wallets & Deposits"
+description: "Generate deposit addresses and read your deposit history."
+---
+
+Generate per-user deposit addresses and read the deposits that have landed for
+your account.
+
+<Info>
+  Both endpoints on this page require the **`read:assets`** claim on your API key.
+</Info>
+
+## Generate a deposit address
+
+```
+GET /api/v1/trading/wallet/{symbol}/{user}
+```
+
+Returns a deposit address for the given coin, **bound to a platform user** you
+specify. Repeated calls for the same `(symbol, user)` pair may return the same
+address — treat it as idempotent and safe to call again.
+
+| Path param | Description |
+| --- | --- |
+| `symbol` | Coin symbol, e.g. `BTC`, `ETH`. |
+| `user` | The platform user id this address is bound to. |
+
+```bash
+curl https://<your-host>/api/v1/trading/wallet/BTC/user_12345 \
+  -H "X-API-KEY: $XENIOS_API_KEY" # + signature headers
+```
+
+```json
+{
+  "address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+}
+```
+
+<Warning>
+  Always show the freshly returned `address` to the end user before they send
+  funds, and make sure you request the address for the **correct coin** — funds
+  sent to an address for the wrong asset or network may be unrecoverable.
+</Warning>
+
+## List your deposits
+
+```
+GET /api/v1/trading/wallet/deposits
+```
+
+Returns every deposit owned by the authenticated client. Results are scoped to
+your account automatically — you can never read another client's deposits.
+
+```json
+[
+  {
+    "id": "d3f1c8a2-1234-4abc-9def-0123456789ab",
+    "symbol": "BTC",
+    "amount": "0.05000000",
+    "status": "COMPLETED",
+    "network": "bitcoin",
+    "transactionId": "9b1d…e4f2",
+    "deposit_address": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh",
+    "createdAt": "2026-05-14T08:31:20.000Z",
+    "completedAt": "2026-05-14T09:02:47.000Z"
+  }
+]
+```
+
+Key fields:
+
+| Field | Description |
+| --- | --- |
+| `symbol` | The deposited asset. |
+| `amount` | Credited amount, as a string. |
+| `status` | Deposit lifecycle state (e.g. `PENDING`, `COMPLETED`). |
+| `network` | The blockchain network the funds arrived on. |
+| `transactionId` | On-chain transaction hash. |
+| `deposit_address` | The address funds were sent to. |
+| `createdAt` / `completedAt` | Detection and settlement timestamps (ISO-8601). |
+
+<Tip>
+  Rather than polling this endpoint, subscribe to the **`deposit`** channel over
+  the WebSocket to get new-deposit events in real time. See
+  [WebSockets](/guides/websockets).
+</Tip>
+
+---
+
+For the complete deposit object and exact schemas, see the
+**[API Reference](/api-reference/overview)**.

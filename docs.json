@@ -1,52 +1,102 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "theme": "almond",
-  "name": "Product Guide",
-  "description": "Step-by-step guides for every product—platform setup, analytics, and integrations in one place.",
-  "colors": {
-    "primary": "#166E3F",
-    "light": "#26BD6C",
-    "dark": "#166E3F"
-  },
-  "favicon": "/favicon.ico",
-  "icons": {
-    "library": "lucide"
-  },
-  "styling": {
-    "eyebrows": "breadcrumbs"
-  },
-  "contextual": {
-    "options": ["copy", "view", "assistant", "mcp", "add-mcp"]
-  },
-  "navigation": {
-    "directory": "card",
-    "pages": [
-      {
-        "group": "Legal",
-        "pages": [
-          "privacy-policy",
-          "terms-and-conditions"
-        ]
-      },
-      "referral-programs"
-    ]
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/yourcompany",
-      "linkedin": "https://linkedin.com/company/yourcompany"
-    }
-  }
+	"$schema": "https://mintlify.com/docs.json",
+	"theme": "mint",
+	"name": "Xenios Trading API",
+	"description": "Place and manage orders, stream live market and account data, and read wallets, deposits and reference data over one authenticated gateway.",
+	"colors": {
+		"primary": "#0F8B7E",
+		"light": "#4FE3D0",
+		"dark": "#0A6F64"
+	},
+	"appearance": {
+		"default": "dark"
+	},
+	"favicon": "/favicon.ico",
+	"api": {
+		"playground": {
+			"display": "none"
+		}
+	},
+	"navigation": {
+		"tabs": [
+			{
+				"tab": "Documentation",
+				"groups": [
+					{
+						"group": "Getting Started",
+						"pages": ["index"]
+					},
+					{
+						"group": "Legal",
+						"pages": ["privacy-policy", "terms-and-conditions"]
+					}
+				]
+			},
+			{
+				"tab": "Trading API Reference",
+				"groups": [
+					{
+						"group": "Home",
+						"pages": ["api-reference/overview", "api-reference/quickstart"]
+					},
+					{
+						"group": "Guides",
+						"pages": [
+							"guides/authentication",
+							"guides/responses",
+							"guides/errors",
+							"guides/orders",
+							"guides/fees-and-limits",
+							"guides/market-data",
+							"guides/wallets-deposits",
+							"guides/security"
+						]
+					},
+					{
+						"group": "REST API",
+						"openapi": "api-reference/openapi.json"
+					},
+					{
+						"group": "Streaming API",
+						"pages": ["guides/websockets"]
+					}
+				]
+			}
+		]
+	},
+	"logo": {
+		"light": "/logo/logo.webp",
+		"dark": "/logo/logo.webp"
+	},
+	"navbar": {
+		"links": [
+			{
+				"label": "Support",
+				"href": "mailto:support@xeniosproject.com"
+			}
+		]
+	},
+	"contextual": {
+		"options": ["copy", "view", "chatgpt", "claude"]
+	},
+	"feedback": {
+		"thumbsRating": true,
+		"suggestEdit": true
+	},
+	"seo": {
+		"metatags": {
+			"og:title": "Xenios Trading API",
+			"og:description": "One authenticated gateway for orders, market data, wallets and realtime streams.",
+			"og:type": "website"
+		},
+		"indexing": "navigable"
+	},
+	"footer": {
+		"socials": {
+			"website": "https://xeniosblockchaingroup.com/",
+			"facebook": "https://www.facebook.com/xeniosblockchaingroup/",
+			"x": "https://x.com/Xenios_group",
+			"linkedin": "https://www.linkedin.com/company/xeniosgroup/posts/?feedView=all"
+		}
+	}
 }

@@ -1,0 +1,70 @@
+---
+title: "Overview"
+description: "One authenticated gateway for orders, market data, wallets, deposits and realtime streams."
+---
+
+The **Xenios Trading API** lets you place and manage orders, stream live market
+and account data, and read wallets, deposits and reference data — all behind a
+single, authenticated gateway. REST and WebSocket traffic share the same host
+and port; you never talk to internal services directly.
+
+## API surfaces
+
+<CardGroup cols={2}>
+  <Card title="REST API" icon="arrows-rotate">
+    Place and cancel orders, search your order history, and read wallets,
+    balances, deposits, products, assets and the order book.
+  </Card>
+  <Card title="Streaming API" icon="bolt" href="/guides/websockets">
+    Real-time order book, order and deposit updates over a single authenticated
+    WebSocket. See [WebSockets](/guides/websockets).
+  </Card>
+</CardGroup>
+
+## What the API supports
+
+- **Orders** — place and cancel limit orders, list and search your own orders.
+- **Market data** — products, assets, OHLCV candles and the live order book.
+- **Wallets & deposits** — read balances, generate deposit addresses and read
+  deposit history.
+- **Realtime** — subscribe to order book, order and deposit channels.
+- **HMAC authentication** — every request is signed; nothing relies on a
+  long-lived bearer token.
+
+## Base URL
+
+Your base URL is provided together with your API key and secret during
+onboarding. All REST endpoints live under that single prefix, and the WebSocket
+endpoint shares the same host.
+
+TLS is terminated at the edge — use `https://` (and `wss://` for sockets) in any
+deployed environment. Liveness checks live at the gateway root, `/api/v1/health`,
+outside the trading base path.
+
+## How a request works
+
+1. You receive an **API key id** and a **secret** during onboarding.
+2. For each request you build a *canonical string* (timestamp, nonce, method,
+   path, content-type, body hash) and sign it with your secret using
+   **HMAC-SHA256**.
+3. You send the signature plus the `X-API-*` headers. The gateway re-computes the
+   signature, checks the timestamp and nonce, verifies your key's permissions,
+   and forwards the call.
+
+The signing recipe is identical for REST and WebSocket handshakes — learn it once
+and reuse it everywhere. See the [Quickstart](/api-reference/quickstart) for a
+working example.
+
+## Conventions
+
+- Requests and responses are **JSON**.
+- Decimal amounts (quantities, prices, balances) are sent as **strings** to avoid
+  floating-point precision loss.
+- Timestamps are **ISO-8601** strings unless noted otherwise.
+- Errors use standard HTTP status codes.
+
+## Get access
+
+Need credentials or have a question? Contact
+[support@xeniosproject.com](mailto:support@xeniosproject.com) and reference your
+account.

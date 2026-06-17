@@ -1,0 +1,213 @@
+---
+title: "Orders"
+description: "Place and cancel limit orders, idempotency, and reading order history."
+---
+
+Place orders, cancel them, and read your order history. Three order types are
+supported — **`LIMIT`**, **`MARKET`**, and **`STOP_LIMIT`**. Order placement is
+**idempotent** — safe to retry — and every order is scoped to the authenticated
+client.
+
+## Placing an order
+
+```
+POST /api/v1/trading/order
+```
+
+### Fields
+
+| Field | Required for | Description |
+| --- | --- | --- |
+| `side` | all | `BUY` or `SELL`. |
+| `type` | all | `LIMIT`, `MARKET`, or `STOP_LIMIT`. |
+| `product` | all | Trading pair, e.g. `BTC-USD`, `ETH-USDC`. |
+| `client_order_id` | all | A UUID v4 you generate. Drives idempotency. |
+| `base_quantity` | all **except** MARKET BUY | Amount of the **base** asset, as a string. |
+| `quote_value` | MARKET BUY only | Amount of **quote** currency to spend, as a string. |
+| `price` | LIMIT, STOP_LIMIT | Limit price in the **quote** asset, as a string. |
+| `stop_price` | STOP_LIMIT only | Trigger price in the **quote** asset, as a string. |
+
+All decimal fields are **positive decimal strings** (e.g. `"0.50"`, `"3000.00"`) —
+no sign, no scientific notation.
+
+### Fields by order type
+
+| Type | `base_quantity` | `quote_value` | `price` | `stop_price` |
+| --- | :---: | :---: | :---: | :---: |
+| `LIMIT` (BUY / SELL) | ✓ | — | ✓ | — |
+| `MARKET` BUY | — | ✓ | — | — |
+| `MARKET` SELL | ✓ | — | — | — |
+| `STOP_LIMIT` | ✓ | — | ✓ | ✓ |
+
+### Examples
+
+<Tabs>
+  <Tab title="Limit">
+    ```json
+    {
+      "side": "BUY",
+      "type": "LIMIT",
+      "base_quantity": "0.00006483",
+      "price": "77127.23",
+      "product": "BTC-USD",
+      "client_order_id": "a1b2c3d4-e5f6-7890-abcd-ef0123456789"
+    }
+    ```
+    Buys/sells a fixed **base** quantity at a set `price` or better.
+  </Tab>
+  <Tab title="Market buy">
+    ```json
+    {
+      "side": "BUY",
+      "type": "MARKET",
+      "quote_value": "100.00",
+      "product": "BTC-USD",
+      "client_order_id": "a1b2c3d4-e5f6-7890-abcd-ef0123456789"
+    }
+    ```
+    A market **BUY** is sized by spend: `quote_value` is how much **quote**
+    currency to spend (e.g. 100 USD) — there's no `base_quantity` or `price`.
+  </Tab>
+  <Tab title="Market sell">
+    ```json
+    {
+      "side": "SELL",
+      "type": "MARKET",
+      "base_quantity": "0.05",
+      "product": "BTC-USD",
+      "client_order_id": "a1b2c3d4-e5f6-7890-abcd-ef0123456789"
+    }
+    ```
+    A market **SELL** is sized by `base_quantity` and executes at the prevailing
+    price.
+  </Tab>
+  <Tab title="Stop-limit">
+    ```json
+    {
+      "side": "SELL",
+      "type": "STOP_LIMIT",
+      "base_quantity": "0.05",
+      "stop_price": "2900.00",
+      "price": "2890.00",
+      "product": "ETH-USDC",
+      "client_order_id": "a1b2c3d4-e5f6-7890-abcd-ef0123456789"
+    }
+    ```
+    Rests until the market hits `stop_price` (the trigger), then places a `LIMIT`
+    order at `price`.
+  </Tab>
+</Tabs>
+
+<Warning>
+  **`base_quantity` is a base-asset amount, not a cash amount.** For a BUY of
+  `BTC-USD`, it's in **BTC**, and the order costs `base_quantity × price` in the
+  quote currency (plus fees). To spend a cash amount instead, use a **MARKET BUY**
+  with `quote_value` (e.g. `"100.00"` USD) — don't put a dollar figure in
+  `base_quantity`.
+</Warning>
+
+### Example request
+
+Build the signed headers as shown in [Authentication](/guides/authentication),
+then send the body:
+
+<CodeGroup>
+
+```ts TypeScript
+const body = JSON.stringify({
+  side: 'BUY',
+  type: 'LIMIT',
+  base_quantity: '0.00006483',
+  price: '77127.23',
+  product: 'BTC-USD',
+  client_order_id: crypto.randomUUID(),
+});
+
+const headers = buildAuthHeaders({
+  secret: process.env.XENIOS_API_SECRET,
+  keyId: process.env.XENIOS_API_KEY,
+  method: 'POST',
+  path: '/api/v1/trading/order',
+  body,
+});
+
+const res = await fetch('https://<your-host>/api/v1/trading/order', {
+  method: 'POST',
+  headers,
+  body,
+});
+const { data } = await res.json();
+console.log(data.type, data.id);
+```
+
+```python Python
+import json, os, uuid, requests
+
+body = json.dumps({
+    "side": "BUY",
+    "type": "LIMIT",
+    "base_quantity": "0.00006483",
+    "price": "77127.23",
+    "product": "BTC-USD",
+    "client_order_id": str(uuid.uuid4()),
+})
+
+headers = build_auth_headers(
+    os.environ["XENIOS_API_SECRET"],
+    os.environ["XENIOS_API_KEY"],
+    "POST", "/api/v1/trading/order", body,
+)
+
+res = requests.post("https://<your-host>/api/v1/trading/order", headers=headers, data=body)
+print(res.json()["data"]["type"])
+```
+
+</CodeGroup>
+
+## Idempotency
+
+`client_order_id` is your idempotency key. If you submit the same
+`client_order_id` again, the API returns the **original** order instead of
+creating a duplicate. Generate a fresh UUID per intended order, and reuse it
+verbatim when retrying after a network error.
+
+## Result types
+
+The response wraps an outcome — always inspect `type`:
+
+| `type` | Meaning |
+| --- | --- |
+| `NEW_ORDER` | Order accepted and created. |
+| `DUPLICATE_REPLAY` | Same `client_order_id` seen before — the original order is returned. |
+| `EXTERNAL_EXECUTION_FAILED` | The exchange rejected the order (e.g. insufficient funds, invalid product). |
+| `INTERNAL_EXECUTION_FAILED` | The order could not be processed internally. |
+
+<Note>
+  A `2xx` HTTP status means the request was understood — it does **not** by
+  itself mean the order was placed. Check `type`.
+</Note>
+
+## Cancelling
+
+```
+PATCH /api/v1/trading/order/{order_id}/cancel
+```
+
+Cancel is the only mutating action on an existing order — all other fields are
+exchange-owned and read-only. Cancelling an already-finished order is a no-op.
+
+## Reading orders
+
+| Endpoint | Returns |
+| --- | --- |
+| `GET /api/v1/trading/order/open` | Your `OPEN` / `PENDING` orders. |
+| `GET /api/v1/trading/order/{order_id}` | A single order (yours only). |
+| `GET /api/v1/trading/order/search` | Filtered search (by product, status, side, date range). |
+| `GET /api/v1/trading/order/report` | Your full order history (for P&L). |
+
+`/order/search` supports standard list query params (`filter`, `sort`,
+`limit`, `page`, …) in addition to the typed filters. All results are scoped to
+your client automatically — you can never read another client's orders.
+
+See the **API Reference** for exact request/response schemas, and
+[Errors & Rate Limits](/guides/errors) for failure handling.

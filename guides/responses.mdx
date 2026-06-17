@@ -1,0 +1,60 @@
+---
+title: "Response Format"
+description: "The standard response envelope, data conventions, and how list endpoints return."
+---
+
+Every successful response from the gateway is wrapped in a consistent
+**envelope**. The resource you asked for is always under `data`.
+
+## The envelope
+
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Request processed successfully",
+  "data": { "...": "the actual payload" }
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `statusCode` | number | The HTTP status code, repeated in the body. |
+| `success` | boolean | `true` for any 2xx response. |
+| `message` | string | Human-readable status. Not meant for control flow. |
+| `data` | object \| array | The resource. Its shape depends on the endpoint. |
+
+<Note>
+  Throughout these guides, example payloads show the **`data`** contents only.
+  In real responses that object is nested under `data` as shown above. Error
+  responses are **not** enveloped this way — see [Errors & Rate Limits](/guides/errors).
+</Note>
+
+## List endpoints
+
+Collection endpoints (e.g. `GET /asset`, `GET /product`, `GET /order/open`)
+return a JSON **array** in `data`:
+
+```json
+{
+  "statusCode": 200,
+  "success": true,
+  "message": "Request processed successfully",
+  "data": [ { "...": "item" }, { "...": "item" } ]
+}
+```
+
+`GET /order/search` additionally accepts standard list query parameters
+(`filter`, `sort`, `limit`, `page`, …) alongside its typed filters. See
+[Orders](/guides/orders).
+
+## Conventions
+
+- **JSON everywhere.** Requests and responses are `application/json`.
+- **Decimals are strings.** Quantities, prices and balances are sent as strings
+  (e.g. `"77127.23"`) to avoid floating-point precision loss. Parse them with a
+  decimal library, not `Number`.
+- **Timestamps are ISO-8601** strings (e.g. `"2026-05-15T12:47:56.460Z"`) unless
+  noted otherwise. The HMAC `X-API-TIMESTAMP` header is the exception — it is
+  Unix **milliseconds**. See [Authentication](/guides/authentication).
+- **Symbols are upper-cased** server-side (`btc-usd` → `BTC-USD`).

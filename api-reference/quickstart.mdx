@@ -1,0 +1,103 @@
+---
+title: "Quickstart"
+description: "Sign your first request and place an order in a few minutes."
+---
+
+This guide takes you from credentials to a live order. Every request is signed
+with **HMAC-SHA256** — the same recipe works for REST and WebSocket handshakes.
+
+<Steps>
+  <Step title="Get credentials">
+    Obtain your `keyId` and `secret` from your account contact. Store the secret
+    in a secret manager — never commit it or send it in a request body.
+  </Step>
+  <Step title="Build the canonical string">
+    For each request, join these fields with newlines and sign them with your
+    secret:
+
+    ```
+    timestamp        // ms since epoch, e.g. 1718630400000
+    nonce            // unique per request (UUID)
+    METHOD           // GET, POST, ...
+    path             // e.g. /api/v1/trading/order/open
+    content-type     // application/json
+    bodyHash         // sha256_hex(body)  — sha256_hex("") for GET
+    ```
+  </Step>
+  <Step title="Send the signed headers">
+    Attach the four headers to every call:
+
+    | Header | Value |
+    | --- | --- |
+    | `X-API-KEY` | your `keyId` |
+    | `X-API-TIMESTAMP` | the timestamp you signed |
+    | `X-API-NONCE` | the nonce you signed |
+    | `X-API-SIGNATURE` | the HMAC-SHA256 hex digest |
+  </Step>
+  <Step title="Make your first call">
+    Call a read endpoint to confirm your signature works:
+
+    ```
+    GET https://<your-host>/api/v1/trading/order/open
+    ```
+  </Step>
+  <Step title="Place an order">
+    `POST /api/v1/trading/order` with a limit order body. Browse the full request
+    and response schema in the **REST API** section.
+  </Step>
+  <Step title="Stream updates">
+    Open the WebSocket and subscribe to the channels you care about. See
+    [WebSockets](/guides/websockets).
+  </Step>
+</Steps>
+
+## Signing example (Node.js)
+
+```js
+import crypto from "node:crypto";
+
+function authHeaders({ secret, keyId, method, path, body = "" }) {
+  const timestamp = Date.now().toString();
+  const nonce = crypto.randomUUID();
+  const bodyHash = crypto.createHash("sha256").update(body, "utf8").digest("hex");
+  const canonical = [
+    timestamp,
+    nonce,
+    method,
+    path,
+    "application/json",
+    bodyHash,
+  ].join("\n");
+  const signature = crypto
+    .createHmac("sha256", secret)
+    .update(canonical, "utf8")
+    .digest("hex");
+  return {
+    "X-API-KEY": keyId,
+    "X-API-TIMESTAMP": timestamp,
+    "X-API-NONCE": nonce,
+    "X-API-SIGNATURE": signature,
+    "Content-Type": "application/json",
+  };
+}
+
+const base = "https://<your-host>";
+const path = "/api/v1/trading/order/open";
+
+const res = await fetch(base + path, {
+  method: "GET",
+  headers: authHeaders({
+    secret: process.env.XENIOS_API_SECRET,
+    keyId: process.env.XENIOS_API_KEY,
+    method: "GET",
+    path,
+  }),
+});
+
+console.log(res.status, await res.json());
+```
+
+<Card title="Stream realtime updates" icon="bolt" href="/guides/websockets" horizontal>
+  Once you can sign a request, the same headers authenticate the WebSocket
+  handshake. See the WebSockets guide.
+</Card>

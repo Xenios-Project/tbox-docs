@@ -1,0 +1,69 @@
+---
+title: "Errors & Rate Limits"
+description: "Status codes, error bodies, rate limits, and safe retries."
+---
+
+The API uses conventional HTTP status codes and JSON error bodies. Use the
+status code for control flow and the message for debugging.
+
+## Status codes
+
+| Code | Meaning | Typical cause |
+| --- | --- | --- |
+| `200` | OK | Request succeeded. For orders, still check `data.type`. |
+| `400` | Bad Request | Malformed payload, or the exchange rejected the request. |
+| `401` | Unauthorized | Missing/invalid signature, stale timestamp, or reused nonce. |
+| `403` | Forbidden | Valid key but missing the required claim, or IP not allowed. |
+| `404` | Not Found | Unknown resource, or a resource that isn't yours. |
+| `429` | Too Many Requests | You exceeded your rate limit. Back off and retry. |
+| `5xx` | Server Error | Transient — retry idempotent requests with backoff. |
+
+## Error body
+
+Errors return a JSON object:
+
+```json
+{
+  "statusCode": 401,
+  "message": "Invalid HMAC signature",
+  "error": "Unauthorized"
+}
+```
+
+In production, authentication messages are intentionally generic (e.g.
+"Authentication failed") to avoid leaking detail. In development they're more
+specific to help you debug signing.
+
+## Authentication errors (401)
+
+Walk through these in order — see [Authentication](/guides/authentication):
+
+- **Missing headers** — all four `X-API-*` headers must be present.
+- **Bad signature** — recompute the canonical string: method case, path with
+  the query string stripped, lowercased content-type, and a SHA-256 of the
+  **raw** body.
+- **Stale timestamp** — must be within 30 seconds of server time, in
+  milliseconds.
+- **Reused nonce** — generate a unique nonce per request.
+
+## Authorization errors (403)
+
+Your signature was valid but your key lacks the **claim** required for that
+route (e.g. `write:orders` to place an order), or your request came from an IP
+outside your key's whitelist.
+
+## Rate limits
+
+Each API key has a per-minute request budget. Exceeding it returns **429**.
+When you hit a limit:
+
+- Slow down and **retry with exponential backoff**.
+- Prefer **WebSocket streams** over REST polling for live data — one
+  subscription replaces a tight polling loop. See [WebSockets](/guides/websockets).
+
+## Retrying safely
+
+Reads (`GET`) are safe to retry. For order placement, **always reuse the same
+`client_order_id`** when retrying — the API is idempotent on that key and will
+return the original order instead of creating a duplicate. See
+[Orders](/guides/orders).

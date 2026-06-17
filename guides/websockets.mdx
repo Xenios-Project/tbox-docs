@@ -1,0 +1,158 @@
+---
+title: "WebSockets"
+description: "Stream order book, order and deposit updates over one authenticated socket."
+---
+
+The WebSocket API streams real-time order book, order and deposit updates over a
+single authenticated socket — through the **same gateway** as the REST API (no
+separate host or port).
+
+## Endpoint
+
+```
+wss://<your-host>/api/v1/trading/ws
+```
+
+## Authenticating the handshake
+
+The socket uses the **same HMAC-SHA256 scheme as REST** — the four `X-API-*`
+headers described in the [API Overview](/api-reference/overview). The handshake is an
+HTTP `GET` upgrade with an empty body, so sign:
+
+- `METHOD` = `GET`
+- `path` = `/api/v1/trading/ws`
+- body = empty string → `sha256_hex("")`
+
+Pass the four `X-API-*` headers on the upgrade request. The host/port are **not**
+part of the signature, so the same signing code works against any environment.
+
+On success the server sends:
+
+```json
+{ "event": "auth_success" }
+```
+
+If the signature is missing or invalid, the connection is closed immediately.
+
+## Subscribing
+
+After `auth_success`, send subscription frames as JSON text:
+
+```json
+{ "action": "subscribe",   "payload": { "channel": "orderbook", "scope": "product", "key": "BTC-USD" } }
+{ "action": "unsubscribe", "payload": { "channel": "orderbook", "scope": "product", "key": "BTC-USD" } }
+```
+
+### Channels & scopes
+
+| Channel     | Scope     | Key                  | What you get                        |
+| ----------- | --------- | -------------------- | ----------------------------------- |
+| `orderbook` | `product` | pair, e.g. `BTC-USD` | Aggregated order book for the pair. |
+| `order`     | `user`    | — (your account)     | Updates for **your own** orders.    |
+| `deposit`   | `user`    | — (your account)     | **Your own** deposits.              |
+
+- **`user` scope is always you.** The key is taken from your authenticated API
+  key — any `key` you send for a `user` subscription is ignored, so you can only
+  ever stream your own orders/deposits.
+- **`orderbook`** is aggregated, anonymous market depth (public). Symbols are
+  upper-cased server-side.
+- The `order` and `deposit` channels are **`user`-scoped only** — there is no
+  cross-account "market view."
+
+## Receiving events
+
+Each broadcast is a typed envelope:
+
+```json
+{
+	"event": "orderbook_update",
+	"channel": "orderbook",
+	"scope": "product",
+	"key": "BTC-USD",
+	"data": { "...": "channel-specific payload" }
+}
+```
+
+The `event` is `<channel>_update` (`orderbook_update`, `order_update`,
+`deposit_update`). When you subscribe to an order book you also receive an
+immediate snapshot:
+
+```json
+{
+	"event": "initial_book",
+	"channel": "orderbook",
+	"scope": "product",
+	"key": "BTC-USD",
+	"data": {}
+}
+```
+
+An invalid subscription returns an error frame:
+
+```json
+{ "error": "Invalid subscription: expected { channel, scope, key }. ..." }
+```
+
+## Example client (Node.js, `ws`)
+
+```js
+import crypto from "node:crypto";
+import WebSocket from "ws";
+
+// Same recipe as REST, fixed to the WS handshake (GET, empty body).
+function wsAuthHeaders({ secret, keyId }) {
+	const timestamp = Date.now().toString();
+	const nonce = crypto.randomUUID();
+	const bodyHash = crypto.createHash("sha256").update("", "utf8").digest("hex");
+	const canonical = [
+		timestamp,
+		nonce,
+		"GET",
+		"/api/v1/trading/ws",
+		"application/json",
+		bodyHash,
+	].join("\n");
+	const signature = crypto
+		.createHmac("sha256", secret)
+		.update(canonical, "utf8")
+		.digest("hex");
+	return {
+		"X-API-KEY": keyId,
+		"X-API-TIMESTAMP": timestamp,
+		"X-API-NONCE": nonce,
+		"X-API-SIGNATURE": signature,
+		"Content-Type": "application/json",
+	};
+}
+
+const ws = new WebSocket(
+	"wss://<your-host>/api/v1/trading/ws",
+	{
+		headers: wsAuthHeaders({
+			secret: process.env.XENIOS_API_SECRET,
+			keyId: process.env.XENIOS_API_KEY,
+		}),
+	},
+);
+
+ws.on("message", (raw) => {
+	const msg = JSON.parse(raw.toString());
+	if (msg.event === "auth_success") {
+		ws.send(
+			JSON.stringify({
+				action: "subscribe",
+				payload: { channel: "orderbook", scope: "product", key: "BTC-USD" },
+			}),
+		);
+	} else {
+		console.log(msg.event, msg);
+	}
+});
+```
+
+## Keepalive
+
+Idle connections are held open for a long window, but very quiet sockets can
+still be dropped by intermediaries. Send a periodic ping (or a lightweight
+re-subscribe) if you expect long gaps between messages, and reconnect with a
+fresh signed handshake on disconnect.

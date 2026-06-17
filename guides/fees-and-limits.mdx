@@ -1,0 +1,92 @@
+---
+title: "Fees & Limits"
+description: "Your trading fee, product whitelist, and per-product order-value limits."
+---
+
+Your account has a **trading fee** and, optionally, **per-product trading
+rules** (a product whitelist and min/max order **values**). You can read both at
+any time, and orders that break a rule are rejected with a clear message.
+
+Both endpoints require the **`read:account`** claim on your API key.
+
+## Your trading fee
+
+Fees are applied as a **markup percent** on your fills. Each client has its own
+rate; if one hasn't been set for you, the platform default applies.
+
+```
+GET /api/v1/trading/account/fees
+```
+
+```json
+{ "markupPercent": 0.30 }
+```
+
+`markupPercent` is a percent — `0.30` means **0.30%**. The fee is deducted from
+the filled amount (the base asset on a BUY, the quote on a SELL) and reflected
+on each order's `fees` / `totalUserRecieveAmount`.
+
+## Your account settings
+
+One call returns your fee plus every product you may trade with its effective
+limits — use it to drive your order forms.
+
+```
+GET /api/v1/trading/account/settings
+```
+
+```json
+{
+  "markupPercent": 0.30,
+  "restricted": true,
+  "products": [
+    { "productId": "BTC-USD", "base": "BTC", "quote": "USD", "quoteCurrency": "USD", "minOrderSize": "10", "maxOrderSize": "100000" },
+    { "productId": "ETH-EUR", "base": "ETH", "quote": "EUR", "quoteCurrency": "EUR", "minOrderSize": "5",  "maxOrderSize": null }
+  ]
+}
+```
+
+- **`restricted`** — always `true`: your account is a **whitelist**, so the
+  `products` listed are the only ones you may trade. An empty `products` array
+  means you have not been granted any products yet and cannot trade.
+- **`products`** — the products you may trade. `minOrderSize` / `maxOrderSize`
+  are the **order value in the quote currency** (`quoteCurrency`) — e.g. a
+  minimum of 10 USD and a maximum of 100,000 USD per order. `null` means no
+  platform bound on that side (the exchange's own limit still applies).
+
+## How rules affect orders
+
+When you place an order, these rules are checked **before** it reaches the
+exchange. The order **value** is measured in the quote currency, and how it's
+derived depends on the [order type](/guides/orders):
+
+- **LIMIT** (and STOP_LIMIT) — `base_quantity × price`.
+- **MARKET BUY** — the `quote_value` you send (the spend).
+- **MARKET SELL** — the value isn't known at submit time, so the platform
+  min/max bounds are **skipped** (the exchange's own limits still apply).
+
+A violation returns **HTTP 400** with a descriptive `message`:
+
+| Situation | Example message |
+| --- | --- |
+| Product not offered by the platform | `Product DOGE-USD is not available for trading.` |
+| Product not in your whitelist | `Product DOGE-USD is not enabled for your account.` |
+| Below the minimum | `Order value 5.00 USD is below the minimum 10 USD for BTC-USD.` |
+| Above the maximum | `Order value 250000.00 USD exceeds the maximum 100000 USD for BTC-USD.` |
+
+```json
+{
+  "statusCode": 400,
+  "message": "Order value 250000.00 USD exceeds the maximum 100000 USD for BTC-USD.",
+  "error": "Bad Request"
+}
+```
+
+Your account can only trade products that have been granted to it. If your
+`products` list is empty, you have no tradable products yet — contact your
+account manager to have products enabled.
+
+Call `GET /account/settings` before building order forms so you can validate
+locally and surface the right limits to your users. See [Orders](/guides/orders)
+for the order payload and [Errors & Rate Limits](/guides/errors) for the full
+status-code reference.

@@ -1,0 +1,190 @@
+---
+title: "Market Data"
+description: "Browse products and assets, read the order book, and fetch OHLCV candles."
+---
+
+Market-data endpoints expose the products you can trade, their underlying
+assets, live order-book depth, and historical candles. They are all reads, and
+every result is scoped to **your** catalogue — you only ever see the products
+and assets enabled for your account.
+
+<Info>
+  All endpoints on this page require the **`read:market-data`** claim on your API
+  key (deposit/wallet reads use a different claim — see
+  [Wallets & Deposits](/guides/wallets-deposits)).
+</Info>
+
+## Products
+
+A **product** is a trading pair (e.g. `BTC-USD`) with its base/quote assets and
+order-value limits. Three views are available.
+
+### Grouped by asset
+
+```
+GET /api/v1/trading/product
+```
+
+Returns every coin that appears in an available product, paired with the
+products it participates in.
+
+```json
+[
+  {
+    "name": "BTC",
+    "availablePairs": [
+      {
+        "id": "BTC-USD",
+        "apiEnabled": true,
+        "base": "BTC",
+        "quote": "USD",
+        "minOrderSize": "10",
+        "maxOrderSize": "100000"
+      }
+    ]
+  }
+]
+```
+
+### A single coin
+
+```
+GET /api/v1/trading/product/{symbol}
+```
+
+Same shape as above, filtered to one coin. Returns `null` in `data` when the
+symbol is unknown, and `404` if there is no product for it.
+
+```bash
+curl https://<your-host>/api/v1/trading/product/BTC \
+  -H "X-API-KEY: $XENIOS_API_KEY" # + signature headers
+```
+
+### Flat list of pairs
+
+```
+GET /api/v1/trading/product/pairs
+```
+
+The same products as `GET /product`, **without** the base/quote grouping — handy
+when you just want a flat list of tradable pairs.
+
+## Assets
+
+```
+GET /api/v1/trading/asset
+```
+
+Returns the assets you can trade — the base and quote assets of the products
+enabled for your account.
+
+```json
+[
+  {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "Bitcoin",
+    "symbol": "BTC",
+    "tradingSupported": true,
+    "explorerUrl": "https://www.blockchain.com/explorer/addresses/btc/{address}"
+  }
+]
+```
+
+<Tip>
+  The asset catalogue changes infrequently — this response is safe to cache
+  client-side.
+</Tip>
+
+## Order book
+
+```
+GET /api/v1/trading/order_book/{coin_pair}
+```
+
+Returns the current **top-10** bid and ask levels for a pair, plus totals and
+the spread.
+
+```json
+{
+  "bids": [
+    { "price": "67432.18", "amount": 0.4231, "total": 28530.85 },
+    { "price": "67430.05", "amount": 1.0124, "total": 68281.41 }
+  ],
+  "offers": [
+    { "price": "67445.00", "amount": 1.5000, "total": 101167.50 },
+    { "price": "67441.10", "amount": 0.7551, "total": 50931.83 }
+  ],
+  "totals": { "bidTotalVolume": 132584.21, "askTotalVolume": 141092.07 },
+  "spread": 6.74,
+  "spreadPercent": 0.01,
+  "ticker": { "price": "67435.55", "time": "2026-05-15T12:47:56.460Z" }
+}
+```
+
+<Warning>
+  **Ordering — both sides are highest-price-first.** `bids[0]` is the best bid
+  (highest buy). `offers[offers.length - 1]` is the best ask (lowest sell). To
+  render the classic stacked book, put `offers` above `bids`; the spread sits
+  between `offers[last]` and `bids[0]`.
+</Warning>
+
+`totals.bidTotalVolume` / `askTotalVolume` are cumulative notional values
+(`Σ price × amount` across the visible side) — use them as the denominator for
+depth-bar widths.
+
+## Candles (OHLCV)
+
+```
+GET /api/v1/trading/product/rates?productId=BTC-USD&timeframe=1h
+```
+
+Returns historical OHLCV candles, **oldest-first**.
+
+```json
+[
+  {
+    "start": "2026-05-15T00:00:00Z",
+    "open": "67120.55",
+    "high": "67890.40",
+    "low": "66980.10",
+    "close": "67432.18",
+    "volume": "1284.532"
+  }
+]
+```
+
+| Query param | Required | Description |
+| --- | --- | --- |
+| `productId` | yes | Trading pair, e.g. `BTC-USD`. |
+| `timeframe` | yes | Candle **bucket size** (see table). Not a history length. |
+| `granularity` | no | Legacy, accepted but **ignored** — derived from `timeframe`. |
+
+`timeframe` selects both the bucket size and a sensible lookback so a chart
+shows ~100–300 candles:
+
+| `timeframe` | Bucket | Candles | Total span |
+| --- | --- | --- | --- |
+| `1m`  | 1 minute   | 240 | 4 hours    |
+| `5m`  | 5 minute   | 288 | 24 hours   |
+| `15m` | 15 minute  | 192 | 2 days     |
+| `1h`  | 1 hour     | 168 | 1 week     |
+| `4h`  | 2 hour\*   | 144 | 12 days    |
+| `1d`  | 1 day      | 90  | 3 months   |
+| `1w`  | 1 day\*    | 180 | ~6 months  |
+| `1M`  | 1 day\*    | 270 | ~9 months  |
+| `1Y`  | 1 day\*    | 290 | ~10 months |
+
+<Note>
+  \* The upstream exchange caps a response at ~300 candles and has no native
+  4-hour / weekly / monthly / yearly granularity. `4h` is approximated with
+  2-hour candles; the longer labels use daily candles with wider lookbacks.
+</Note>
+
+Candles are gated to your catalogue — requesting a product you can't trade
+returns an error. See [Fees & Limits](/guides/fees-and-limits) for how your
+product whitelist works.
+
+---
+
+For exact request/response schemas of every endpoint, see the
+**[API Reference](/api-reference/overview)**.

@@ -1,0 +1,1953 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/health": {
+      "servers": [
+        {
+          "url": "https://<your-host>/api/v1",
+          "description": "Development gateway root. Health and readiness probes live outside the trading base path."
+        }
+      ],
+      "get": {
+        "description": "Lightweight liveness check for container orchestrators (Kubernetes, Docker, ECS).\n\n      **Scope**\n      Verifies only that the process is alive and serving HTTP traffic.\n      Does **not** check DB or Redis connectivity — use `/readiness` for that.\n\n      **Performance**\n      Constant-time, no I/O. Safe to poll every 1–5 seconds.",
+        "operationId": "getAppHealth",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "Process is alive and accepting requests.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "example": "running"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Process is starting up, shutting down, or unhealthy."
+          }
+        },
+        "summary": "Liveness probe",
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/order_book/{coin_pair}": {
+      "get": {
+        "description": "Returns the current top-10 bid and ask levels for the given trading pair.\n\n      **Ordering — standard exchange layout**\n      Both `bids` and `offers` are ordered **highest price first**.\n\n      - `bids[0]` is the **best bid** (highest buy, closest to spread).\n      - `offers[offers.length - 1]` is the **best ask** (lowest sell, closest to spread).\n\n      Renders directly into two stacked tables: iterate each array top-to-bottom,\n      put the asks (`offers`) above the bids, and the spread row sits between\n      `offers[last]` and `bids[0]`.\n\n      **Totals**\n      `totals.bidTotalVolume` / `askTotalVolume` are cumulative notional values\n      (sum of `price × amount` across the visible side) — use them as the\n      denominator for depth-bar widths.",
+        "operationId": "getOrderBookSnapshot",
+        "parameters": [
+          {
+            "name": "coin_pair",
+            "required": true,
+            "in": "path",
+            "description": "Trading pair id (e.g. `BTC-USD`).",
+            "schema": {
+              "example": "BTC-USD",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrderBookSnapshotDto"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "summary": "Get top-10 order book snapshot",
+        "tags": [
+          "Order Book"
+        ]
+      }
+    },
+    "/order": {
+      "post": {
+        "description": "Submits an order for the authenticated client. Supported types are\n      `LIMIT`, `MARKET` and `STOP_LIMIT`; the required fields vary by type\n      (a MARKET BUY is sized by `quote_value`, STOP_LIMIT adds `stop_price`).\n\n      **Idempotency**\n      Replays of the same `client_order_id` return the original order with\n      `type=DUPLICATE_REPLAY` instead of creating a new one.",
+        "operationId": "createOrder",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "description": "Order payload. Required fields depend on `type` (LIMIT, MARKET, STOP_LIMIT).",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Order creation outcome. Inspect `data.type` to distinguish `NEW_ORDER`, `DUPLICATE_REPLAY`, and the `*_EXECUTION_FAILED` variants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrderResult"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid order payload, a per-client rule violation (product not enabled for your account, or order size below/above your configured limit), or rejected by the exchange. The `message` explains which."
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "write:orders"
+            ]
+          }
+        ],
+        "summary": "Place an order",
+        "tags": [
+          "Orders"
+        ]
+      }
+    },
+    "/order/open": {
+      "get": {
+        "description": "Returns every order for the authenticated client with status `OPEN` or `PENDING`.",
+        "operationId": "listOpenOrders",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Order"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "read:orders"
+            ]
+          }
+        ],
+        "summary": "List active orders",
+        "tags": [
+          "Orders"
+        ]
+      }
+    },
+    "/order/search": {
+      "get": {
+        "description": "Returns orders that match the provided filters. Results are always\n      scoped to the authenticated client.\n\n      Standard list query params are also supported: `fields`, `s`,\n      `filter`, `or`, `sort`, `join`, `limit`, `offset`, `page`,\n      `cache`.",
+        "operationId": "searchOrders",
+        "parameters": [
+          {
+            "name": "product_ids",
+            "required": false,
+            "in": "query",
+            "description": "Repeat or comma-separate (e.g. `?product_ids=BTC-USD,ETH-USD`).",
+            "schema": {
+              "example": [
+                "BTC-USD",
+                "ETH-USD"
+              ],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "statuses",
+            "required": false,
+            "in": "query",
+            "description": "Filter by status. Accepts repeated keys or comma-separated. Values are uppercased on transform.",
+            "schema": {
+              "example": [
+                "FAILED",
+                "CANCELLED"
+              ],
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "CANCELLED",
+                  "EXPIRED",
+                  "FAILED",
+                  "FILLED"
+                ]
+              }
+            }
+          },
+          {
+            "name": "type",
+            "required": false,
+            "in": "query",
+            "description": "Filter by order type (LIMIT, MARKET, STOP_LIMIT). Omit to return all types.",
+            "schema": {
+              "example": "LIMIT",
+              "type": "string",
+              "enum": [
+                "LIMIT",
+                "MARKET",
+                "STOP_LIMIT"
+              ]
+            }
+          },
+          {
+            "name": "side",
+            "required": false,
+            "in": "query",
+            "description": "Filter by order side.",
+            "schema": {
+              "example": "BUY",
+              "type": "string",
+              "enum": [
+                "BUY",
+                "SELL"
+              ]
+            }
+          },
+          {
+            "name": "start_date",
+            "required": false,
+            "in": "query",
+            "description": "ISO 8601 timestamp (inclusive lower bound).",
+            "schema": {
+              "format": "date-time",
+              "example": "2025-12-01T00:00:00Z",
+              "type": "string"
+            }
+          },
+          {
+            "name": "end_date",
+            "required": false,
+            "in": "query",
+            "description": "ISO 8601 timestamp (inclusive upper bound, must be ≥ `start_date`).",
+            "schema": {
+              "format": "date-time",
+              "example": "2025-12-09T23:59:59Z",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Order"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error (invalid enum, malformed date-time, `start_date > end_date`, …)."
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "read:orders"
+            ]
+          }
+        ],
+        "summary": "Search the caller’s orders",
+        "tags": [
+          "Orders"
+        ]
+      }
+    },
+    "/order/report": {
+      "get": {
+        "description": "Returns every order for the authenticated client, unfiltered by status. Intended for client-side P&L computation.",
+        "operationId": "getOrderReport",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Order"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "read:orders"
+            ]
+          }
+        ],
+        "summary": "Get the caller’s full order history",
+        "tags": [
+          "Orders"
+        ]
+      }
+    },
+    "/order/{order_id}": {
+      "get": {
+        "description": "Returns the order with the given id, scoped to the authenticated client. Returns `null` when no such order exists.",
+        "operationId": "getOrderById",
+        "parameters": [
+          {
+            "name": "order_id",
+            "required": true,
+            "in": "path",
+            "description": "Order id.",
+            "schema": {
+              "example": "b9f266be-ebe9-41fc-a07f-57ad43dee26f",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/GetOrderResponse"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No order with that id belongs to the caller."
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "read:orders"
+            ]
+          }
+        ],
+        "summary": "Get a single order",
+        "tags": [
+          "Orders"
+        ]
+      }
+    },
+    "/order/{order_id}/cancel": {
+      "patch": {
+        "description": "Cancels the order and marks it `CANCELLED`. Subsequent calls are no-ops.",
+        "operationId": "cancelOrder",
+        "parameters": [
+          {
+            "name": "order_id",
+            "required": true,
+            "in": "path",
+            "description": "Order id to cancel.",
+            "schema": {
+              "example": "b9f266be-ebe9-41fc-a07f-57ad43dee26f",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "On success the envelope `data` is the id of the cancelled order.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "type": "string",
+                          "format": "uuid",
+                          "example": "b9f266be-ebe9-41fc-a07f-57ad43dee26f"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          },
+          "404": {
+            "description": "No order with that id belongs to the caller."
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "cancel:orders"
+            ]
+          }
+        ],
+        "summary": "Cancel an order",
+        "tags": [
+          "Orders"
+        ]
+      }
+    },
+    "/wallet/{symbol}/{user}": {
+      "get": {
+        "description": "Returns a deposit address for the supplied coin, bound to the given platform user. Repeated calls for the same `(symbol, user)` pair may return the same address.",
+        "operationId": "generateDepositAddress",
+        "parameters": [
+          {
+            "name": "symbol",
+            "required": true,
+            "in": "path",
+            "description": "Coin symbol (e.g. `BTC`, `ETH`).",
+            "schema": {
+              "example": "BTC",
+              "type": "string"
+            }
+          },
+          {
+            "name": "user",
+            "required": true,
+            "in": "path",
+            "description": "Platform user id this address is bound to.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/DepositAddress"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "read:assets"
+            ]
+          }
+        ],
+        "summary": "Generate a deposit address for a coin",
+        "tags": [
+          "Wallets"
+        ]
+      }
+    },
+    "/wallet/deposits": {
+      "get": {
+        "description": "Returns every deposit owned by the authenticated client.",
+        "operationId": "listDeposits",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Deposit"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "read:assets"
+            ]
+          }
+        ],
+        "summary": "List deposits for the caller",
+        "tags": [
+          "Wallets"
+        ]
+      }
+    },
+    "/product": {
+      "get": {
+        "description": "Returns every coin that appears in an available product, paired with the list of trading products it participates in.",
+        "operationId": "listProductGroups",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/CoinWithPairs"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "read:market-data"
+            ]
+          }
+        ],
+        "summary": "List products grouped by asset",
+        "tags": [
+          "Products"
+        ]
+      }
+    },
+    "/product/rates": {
+      "get": {
+        "description": "Returns historical OHLCV candles for the given product, ordered oldest-first.\n\n      **`timeframe` is the candle bucket size**, not a history length.\n      The server picks an appropriate Coinbase Advanced Trade granularity\n      and a sensible lookback per timeframe so the chart shows ~100–300 candles:\n\n      | `timeframe` | Granularity (Advanced Trade) | Candles returned | Total span |\n      | --- | --- | --- | --- |\n      | `1m`  | ONE_MINUTE      | 240 | 4 hours    |\n      | `5m`  | FIVE_MINUTE     | 288 | 24 hours   |\n      | `15m` | FIFTEEN_MINUTE  | 192 | 2 days     |\n      | `1h`  | ONE_HOUR        | 168 | 1 week     |\n      | `4h`  | TWO_HOUR        | 144 | 12 days    |\n      | `1d`  | ONE_DAY         | 90  | 3 months   |\n      | `1w`  | ONE_DAY         | 180 | ~6 months  |\n      | `1M`  | ONE_DAY         | 270 | ~9 months  |\n      | `1Y`  | ONE_DAY         | 290 | ~10 months |\n\n      Coinbase Advanced Trade caps a single response at ~300 candles and\n      has no native `FOUR_HOUR` / weekly / monthly / yearly granularity.\n      `4h` is approximated with `TWO_HOUR` candles, and the longer\n      labels use daily candles with progressively wider lookbacks.\n\n      The legacy `granularity` query param is accepted but ignored — the\n      server derives it from `timeframe` to prevent the two from drifting.",
+        "operationId": "getProductCandles",
+        "parameters": [
+          {
+            "name": "productId",
+            "required": true,
+            "in": "query",
+            "description": "Trading pair id (e.g. `BTC-USDC`).",
+            "schema": {
+              "example": "BTC-USDC",
+              "type": "string"
+            }
+          },
+          {
+            "name": "timeframe",
+            "required": true,
+            "in": "query",
+            "description": "Candle bucket size. The server picks the Coinbase granularity and a sensible lookback for each value — see the operation description for the table.",
+            "schema": {
+              "example": "1h",
+              "type": "string",
+              "enum": [
+                "1m",
+                "5m",
+                "15m",
+                "1h",
+                "4h",
+                "1d",
+                "1w",
+                "1M",
+                "1Y"
+              ]
+            }
+          },
+          {
+            "name": "granularity",
+            "required": false,
+            "in": "query",
+            "description": "Ignored — kept for backward compatibility. The server derives the effective granularity from `timeframe`. Older clients can still send a CandlesGranularity value; new code should just omit this.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ONE_MINUTE",
+                "FIVE_MINUTES",
+                "FIFTEEN_MINUTES",
+                "ONE_HOUR",
+                "SIX_HOURS",
+                "ONE_DAY",
+                "THIRTY_MINUTES",
+                "TWO_HOURS",
+                "FOUR_HOURS"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/TradingCandleDto"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "read:market-data"
+            ]
+          }
+        ],
+        "summary": "Get OHLCV candles for a product",
+        "tags": [
+          "Products"
+        ]
+      }
+    },
+    "/product/pairs": {
+      "get": {
+        "description": "Same products as `GET /product`, without the base/quote grouping.",
+        "operationId": "listProductPairs",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/CoinWithPairs"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "read:market-data"
+            ]
+          }
+        ],
+        "summary": "List available product pairs",
+        "tags": [
+          "Products"
+        ]
+      }
+    },
+    "/product/sync": {
+      "post": {
+        "description": "Internal: re-fetches Coinbase assets and products and upserts them into the shared catalogue (preserving curation flags). Returns the counts touched.",
+        "operationId": "syncCatalogue",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "internal:catalogue-sync"
+            ]
+          }
+        ],
+        "summary": "Refresh the local asset/product catalogue from Coinbase",
+        "tags": [
+          "Products"
+        ]
+      }
+    },
+    "/product/{symbol}": {
+      "get": {
+        "description": "Same shape as `GET /product`, filtered to a single coin. Returns `null` when the symbol is unknown.",
+        "operationId": "getProductBySymbol",
+        "parameters": [
+          {
+            "name": "symbol",
+            "required": true,
+            "in": "path",
+            "description": "Coin symbol (e.g. `BTC`, `ETH`, `USD`).",
+            "schema": {
+              "example": "BTC",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/CoinWithPairs"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No product known for the given symbol."
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "read:market-data"
+            ]
+          }
+        ],
+        "summary": "Get product grouping by coin symbol",
+        "tags": [
+          "Products"
+        ]
+      }
+    },
+    "/asset": {
+      "get": {
+        "description": "Returns the assets you can trade — the base and quote assets of the\n      products enabled for your account. With no product whitelist this is every\n      asset used by the platform's enabled products; with a whitelist it narrows\n      to the assets your allowed products use.\n\n      **Caching**\n      Response is suitable for client-side caching; the asset catalog changes infrequently.",
+        "operationId": "listAssets",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Asset"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "read:market-data"
+            ]
+          }
+        ],
+        "summary": "List your tradable assets",
+        "tags": [
+          "Assets"
+        ]
+      }
+    },
+    "/account/fees": {
+      "get": {
+        "description": "Returns the markup/fee applied to the authenticated client’s fills, as a percent (e.g. 0.30 = 0.30%). This is the rate actually charged — a per-client value when configured, otherwise the platform default.",
+        "operationId": "getFees",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/FeesResponse"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "read:account"
+            ]
+          }
+        ],
+        "summary": "Get your trading fee",
+        "tags": [
+          "Account"
+        ]
+      }
+    },
+    "/account/settings": {
+      "get": {
+        "description": "Returns the authenticated client’s effective fee plus the products it may trade with their order-value limits. Orders that violate these are rejected with a 400.",
+        "operationId": "getAccountSettings",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ClientSettingsResponse"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or invalid API credentials."
+          }
+        },
+        "security": [
+          {
+            "xenios-hmac": [
+              "read:account"
+            ]
+          }
+        ],
+        "summary": "Get your account trading settings",
+        "tags": [
+          "Account"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Xenios Trading API",
+    "description": "Place and manage orders, stream live market and account data, and read wallets, deposits and reference data over one authenticated gateway. All protected endpoints are authenticated with an HMAC-SHA256 request signature (see the Authentication guide). Decimal amounts are strings; timestamps are ISO-8601. Successful responses are wrapped in a standard { statusCode, success, message, data } envelope.",
+    "version": "1.0",
+    "contact": {}
+  },
+  "tags": [
+    {
+      "name": "Orders",
+      "description": "Place, cancel, and read your orders. Placement is idempotent on client_order_id."
+    },
+    {
+      "name": "Order Book",
+      "description": "Top-of-book depth snapshots for a trading pair."
+    },
+    {
+      "name": "Products",
+      "description": "Tradable products and pairs, plus OHLCV candles for charting."
+    },
+    {
+      "name": "Assets",
+      "description": "The assets available to your account."
+    },
+    {
+      "name": "Wallets",
+      "description": "Generate deposit addresses and read deposit history."
+    },
+    {
+      "name": "Account",
+      "description": "Your trading fee and effective account settings."
+    },
+    {
+      "name": "Health",
+      "description": "Liveness and readiness probes."
+    }
+  ],
+  "servers": [
+    {
+      "url": "https://<your-host>/api/v1/trading",
+      "description": "Development gateway. Prefix every trading path with this base URL."
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "xenios-hmac": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-KEY",
+        "description": "HMAC-SHA256 authentication. Sign every request and send X-API-KEY, X-API-SIGNATURE, X-API-TIMESTAMP and X-API-NONCE (see the Authentication guide). Each route also requires a specific claim on your API key (e.g. read:orders, write:orders, read:account, read:market-data)."
+      }
+    },
+    "schemas": {
+      "ApiResponse": {
+        "type": "object",
+        "properties": {
+          "statusCode": {
+            "type": "number",
+            "description": "HTTP status code echoed in the body.",
+            "example": 200
+          },
+          "success": {
+            "type": "boolean",
+            "description": "True for success responses.",
+            "example": true
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable status message.",
+            "example": "Request processed successfully"
+          }
+        },
+        "required": [
+          "statusCode",
+          "success"
+        ]
+      },
+      "OrderBookLevelDto": {
+        "type": "object",
+        "properties": {
+          "price": {
+            "type": "string",
+            "description": "Limit price for this level (in quote currency).",
+            "example": "67432.18"
+          },
+          "amount": {
+            "type": "number",
+            "description": "Aggregated quantity available at this price.",
+            "example": 0.4231
+          },
+          "total": {
+            "type": "number",
+            "description": "Notional total (price × amount).",
+            "example": 28530.85
+          }
+        },
+        "required": [
+          "price",
+          "amount",
+          "total"
+        ]
+      },
+      "OrderBookTotalsDto": {
+        "type": "object",
+        "properties": {
+          "bidTotalVolume": {
+            "type": "number",
+            "description": "Sum of (price × amount) across every visible bid level — i.e. the cumulative notional resting on the bid side.",
+            "example": 132584.21
+          },
+          "askTotalVolume": {
+            "type": "number",
+            "description": "Sum of (price × amount) across every visible ask level — cumulative notional resting on the ask side.",
+            "example": 141092.07
+          }
+        },
+        "required": [
+          "bidTotalVolume",
+          "askTotalVolume"
+        ]
+      },
+      "OrderBookSnapshotDto": {
+        "type": "object",
+        "properties": {
+          "bids": {
+            "description": "Bid side — **highest price first**. `bids[0]` is the best bid (closest to the spread). Iterate top-to-bottom to render the bid table below the spread row.",
+            "example": [
+              {
+                "price": "67432.18",
+                "amount": 0.4231,
+                "total": 28530.85
+              },
+              {
+                "price": "67430.05",
+                "amount": 1.0124,
+                "total": 68281.41
+              },
+              {
+                "price": "67428.40",
+                "amount": 0.0875,
+                "total": 5900
+              }
+            ],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderBookLevelDto"
+            }
+          },
+          "offers": {
+            "description": "Ask side — **highest price first** (so the array iterates top-to-bottom in the standard exchange layout). The **best ask** sits at `offers[offers.length - 1]`, immediately above the spread row.",
+            "example": [
+              {
+                "price": "67445.00",
+                "amount": 1.5,
+                "total": 101167.5
+              },
+              {
+                "price": "67441.10",
+                "amount": 0.7551,
+                "total": 50931.83
+              },
+              {
+                "price": "67438.92",
+                "amount": 0.2104,
+                "total": 14193.15
+              }
+            ],
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrderBookLevelDto"
+            }
+          },
+          "totals": {
+            "description": "Cumulative notional resting on each side of the book.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OrderBookTotalsDto"
+              }
+            ]
+          },
+          "spread": {
+            "type": "number",
+            "description": "Absolute spread between best bid and best ask (quote ccy).",
+            "example": 6.74
+          },
+          "spreadPercent": {
+            "type": "number",
+            "description": "Spread as a percentage of the best ask.",
+            "example": 0.01
+          },
+          "ticker": {
+            "type": "object",
+            "description": "Latest known ticker snapshot for this pair.",
+            "example": {
+              "price": "67435.55",
+              "time": "2026-05-15T12:47:56.460Z"
+            },
+            "nullable": true
+          }
+        },
+        "required": [
+          "bids",
+          "offers",
+          "totals",
+          "spread",
+          "spreadPercent"
+        ]
+      },
+      "Order": {
+        "type": "object",
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "description": "Row creation timestamp (ISO 8601).",
+            "format": "date-time",
+            "example": "2026-03-12T09:21:44.000Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "description": "Row last-update timestamp (ISO 8601).",
+            "format": "date-time",
+            "example": "2026-05-08T14:03:11.000Z"
+          },
+          "id": {
+            "type": "string",
+            "description": "Order id.",
+            "example": "b9f266be-ebe9-41fc-a07f-57ad43dee26f"
+          },
+          "externalId": {
+            "type": "object",
+            "description": "Exchange-side reference id assigned once the order is accepted.",
+            "example": "8aa8b3e8-6f3d-4f9a-9c2a-2a5a8f9b1c3d",
+            "nullable": true
+          },
+          "userId": {
+            "type": "string",
+            "description": "Id of the client that owns this order.",
+            "nullable": true
+          },
+          "portfolioId": {
+            "type": "string",
+            "description": "Portfolio id the order was placed under.",
+            "nullable": true
+          },
+          "productId": {
+            "type": "string",
+            "description": "Trading product id.",
+            "example": "BTC-USD"
+          },
+          "side": {
+            "type": "string",
+            "description": "Order side.",
+            "enum": [
+              "BUY",
+              "SELL"
+            ]
+          },
+          "clientOrderId": {
+            "type": "string",
+            "description": "Client-generated idempotency key (UUID) supplied on create.",
+            "example": "a1b2c3d4-e5f6-7890-abcd-ef0123456789"
+          },
+          "type": {
+            "type": "string",
+            "description": "Order type. Currently only `LIMIT` is supported.",
+            "enum": [
+              "MARKET",
+              "LIMIT",
+              "TWAP",
+              "BLOCK",
+              "VWAP",
+              "STOP_LIMIT",
+              "RFQ",
+              "PEG"
+            ]
+          },
+          "baseQuantity": {
+            "type": "string",
+            "description": "Base asset quantity (string-encoded decimal).",
+            "example": "0.50",
+            "nullable": true
+          },
+          "quoteValue": {
+            "type": "string",
+            "description": "Quote value = `baseQuantity` × `limitPrice` (string-encoded).",
+            "nullable": true
+          },
+          "limitPrice": {
+            "type": "string",
+            "description": "Limit price (string-encoded decimal).",
+            "example": "50000.00",
+            "nullable": true
+          },
+          "startTime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "expiryTime": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "description": "Current order status.",
+            "enum": [
+              "OPEN",
+              "FILLED",
+              "CANCELLED",
+              "EXPIRED",
+              "FAILED",
+              "PENDING"
+            ]
+          },
+          "timeInForce": {
+            "type": "string",
+            "description": "Time-in-force flag.",
+            "nullable": true
+          },
+          "filledQuantity": {
+            "type": "string",
+            "description": "Filled quantity (string-encoded decimal).",
+            "nullable": true
+          },
+          "filledValue": {
+            "type": "string",
+            "description": "Filled value in quote asset (string-encoded decimal).",
+            "nullable": true
+          },
+          "averageFilledPrice": {
+            "type": "string",
+            "description": "Volume-weighted average fill price (string-encoded decimal).",
+            "nullable": true
+          },
+          "commission": {
+            "type": "string",
+            "description": "Commission charged (string-encoded).",
+            "nullable": true
+          },
+          "exchangeFee": {
+            "type": "string",
+            "description": "Exchange fee charged (string-encoded).",
+            "nullable": true
+          },
+          "historicalPov": {
+            "type": "string",
+            "nullable": true
+          },
+          "stopPrice": {
+            "type": "string",
+            "description": "Stop price (string-encoded).",
+            "nullable": true
+          },
+          "netAverageFilledPrice": {
+            "type": "string",
+            "description": "Average filled price net of fees (string-encoded).",
+            "nullable": true
+          },
+          "userContext": {
+            "type": "string",
+            "nullable": true
+          },
+          "clientProductId": {
+            "type": "string",
+            "nullable": true
+          },
+          "postOnly": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "orderEditHistory": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "nullable": true
+          },
+          "isRaiseExact": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "displaySize": {
+            "type": "string",
+            "nullable": true
+          },
+          "editHistory": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "nullable": true
+          },
+          "displayQuoteSize": {
+            "type": "string",
+            "nullable": true
+          },
+          "displayBaseSize": {
+            "type": "string",
+            "nullable": true
+          },
+          "synced": {
+            "type": "boolean",
+            "description": "True once the latest order state has been reconciled with the exchange.",
+            "default": false
+          },
+          "fees": {
+            "type": "string",
+            "description": "Total fees (string-encoded decimal).",
+            "nullable": true
+          },
+          "totalUserRecieveAmount": {
+            "type": "string",
+            "description": "Final amount credited to the client. For `BUY` this is base asset; for `SELL` it is quote asset (string-encoded).",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "productId",
+          "side",
+          "clientOrderId",
+          "type",
+          "status",
+          "synced"
+        ]
+      },
+      "OrderResult": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Outcome discriminator.",
+            "enum": [
+              "NEW_ORDER",
+              "DUPLICATE_REPLAY",
+              "EXTERNAL_EXECUTION_FAILED",
+              "INTERNAL_EXECUTION_FAILED",
+              "CLIENT_NOT_FOUND"
+            ],
+            "example": "NEW_ORDER"
+          },
+          "order": {
+            "description": "The created or matched order. Present for `NEW_ORDER` and `DUPLICATE_REPLAY`; absent otherwise.",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Order"
+              }
+            ]
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable explanation, populated on failure or duplicate.",
+            "example": "Duplicate order request detected."
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "OrderRequest": {
+        "type": "object",
+        "properties": {
+          "side": {
+            "type": "string",
+            "description": "Order side.",
+            "enum": [
+              "BUY",
+              "SELL"
+            ],
+            "example": "BUY"
+          },
+          "type": {
+            "type": "string",
+            "description": "Order type. `LIMIT`, `MARKET` and `STOP_LIMIT` are accepted.",
+            "enum": [
+              "LIMIT",
+              "MARKET",
+              "STOP_LIMIT"
+            ],
+            "example": "LIMIT"
+          },
+          "base_quantity": {
+            "type": "string",
+            "description": "Base asset quantity (string-encoded decimal). Required for all orders except a MARKET BUY, which is sized by `quote_value` instead.",
+            "example": "0.50"
+          },
+          "quote_value": {
+            "type": "string",
+            "description": "Quote spend (string-encoded decimal). Required for a MARKET BUY (the amount of quote currency to spend); ignored otherwise.",
+            "example": "100.00"
+          },
+          "price": {
+            "type": "string",
+            "description": "Limit price (string-encoded decimal). Required for LIMIT and STOP_LIMIT orders; omitted for MARKET (executes at the prevailing price).",
+            "example": "3000.00"
+          },
+          "stop_price": {
+            "type": "string",
+            "description": "Stop (trigger) price (string-encoded decimal). Required for STOP_LIMIT orders; ignored otherwise.",
+            "example": "2900.00"
+          },
+          "client_order_id": {
+            "type": "string",
+            "description": "Client-generated idempotency key (UUID v4). Replays of the same value return the original order.",
+            "example": "a1b2c3d4-e5f6-7890-abcd-ef0123456789"
+          },
+          "product": {
+            "type": "string",
+            "description": "Trading pair id (e.g. `BTC-USD`, `ETH-USDC`).",
+            "example": "ETH-USDC"
+          }
+        },
+        "required": [
+          "side",
+          "type",
+          "base_quantity",
+          "client_order_id",
+          "product"
+        ]
+      },
+      "GetOrderResponse": {
+        "type": "object",
+        "properties": {
+          "order": {
+            "$ref": "#/components/schemas/Order"
+          }
+        },
+        "required": [
+          "order"
+        ]
+      },
+      "DepositAddress": {
+        "type": "object",
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "On-chain deposit address.",
+            "example": "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"
+          }
+        },
+        "required": [
+          "address"
+        ]
+      },
+      "Deposit": {
+        "type": "object",
+        "properties": {
+          "internalId": {
+            "type": "string",
+            "description": "Deposit id."
+          },
+          "id": {
+            "type": "string",
+            "description": "Exchange-side deposit reference id."
+          },
+          "walletId": {
+            "type": "string",
+            "description": "Receiving wallet id."
+          },
+          "portfolioId": {
+            "type": "string",
+            "description": "Portfolio id the deposit was credited to."
+          },
+          "type": {
+            "type": "string",
+            "description": "Transaction type (e.g. `DEPOSIT`)."
+          },
+          "status": {
+            "type": "string",
+            "description": "Settlement status (`PENDING` / `COMPLETED` / `FAILED`).",
+            "nullable": true
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Asset symbol (e.g. `BTC`, `USD`)."
+          },
+          "amount": {
+            "type": "string",
+            "description": "Deposited amount (string-encoded decimal).",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "transferFrom": {
+            "type": "object",
+            "description": "Source of the transfer.",
+            "additionalProperties": true
+          },
+          "transferTo": {
+            "type": "object",
+            "description": "Destination of the transfer.",
+            "additionalProperties": true
+          },
+          "networkFees": {
+            "type": "string",
+            "nullable": true
+          },
+          "fees": {
+            "type": "string",
+            "nullable": true
+          },
+          "feeSymbol": {
+            "type": "string",
+            "nullable": true
+          },
+          "blockchainIds": {
+            "description": "Confirming blockchain tx ids.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "transactionId": {
+            "type": "string",
+            "nullable": true
+          },
+          "destinationSymbol": {
+            "type": "string",
+            "nullable": true
+          },
+          "estimatedNetworkFees": {
+            "type": "object",
+            "nullable": true
+          },
+          "network": {
+            "type": "string",
+            "nullable": true
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "nullable": true
+          },
+          "networkInfo": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "deposit_address": {
+            "type": "string",
+            "description": "Receiving on-chain address.",
+            "default": ""
+          },
+          "client_id": {
+            "type": "string",
+            "description": "Id of the client that owns this deposit.",
+            "default": ""
+          }
+        },
+        "required": [
+          "internalId",
+          "id",
+          "walletId",
+          "portfolioId",
+          "type",
+          "symbol",
+          "createdAt",
+          "completedAt",
+          "transferFrom",
+          "transferTo",
+          "blockchainIds",
+          "networkInfo",
+          "deposit_address",
+          "client_id"
+        ]
+      },
+      "Product": {
+        "type": "object",
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "description": "Row creation timestamp (ISO 8601).",
+            "format": "date-time",
+            "example": "2026-03-12T09:21:44.000Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "description": "Row last-update timestamp (ISO 8601).",
+            "format": "date-time",
+            "example": "2026-05-08T14:03:11.000Z"
+          },
+          "id": {
+            "type": "string",
+            "description": "Product / trading pair id.",
+            "example": "BTC-USD"
+          },
+          "apiEnabled": {
+            "type": "boolean",
+            "description": "Whether this product is exposed through the public API.",
+            "example": true
+          },
+          "base": {
+            "type": "object",
+            "description": "Base asset symbol.",
+            "example": "BTC"
+          },
+          "quote": {
+            "type": "object",
+            "description": "Quote asset symbol.",
+            "example": "USD"
+          },
+          "coinbaseProductId": {
+            "type": "object",
+            "description": "The exact Coinbase product id this pair resolves to (e.g. the stablecoin-quoted equivalent). Used when placing orders on Coinbase.",
+            "example": "BTC-USDC",
+            "nullable": true
+          },
+          "coinbaseMinSize": {
+            "type": "object",
+            "description": "Coinbase minimum order size in base units.",
+            "nullable": true
+          },
+          "coinbaseMaxSize": {
+            "type": "object",
+            "description": "Coinbase maximum order size in base units.",
+            "nullable": true
+          },
+          "coinbaseBaseIncrement": {
+            "type": "object",
+            "description": "Coinbase base-asset increment.",
+            "nullable": true
+          },
+          "coinbaseQuoteMinSize": {
+            "type": "object",
+            "description": "Coinbase minimum order size in quote (notional) units — the real practical floor Coinbase enforces, e.g. 1 USD.",
+            "nullable": true
+          },
+          "coinbaseQuoteMaxSize": {
+            "type": "object",
+            "description": "Coinbase maximum order size in quote (notional) units.",
+            "nullable": true
+          },
+          "minOrderSize": {
+            "type": "object",
+            "description": "Platform minimum order value in quote (notional) units. Must be >= the Coinbase quote minimum.",
+            "nullable": true
+          },
+          "maxOrderSize": {
+            "type": "object",
+            "description": "Platform maximum order value in quote (notional) units. Must be <= the Coinbase quote maximum.",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "apiEnabled"
+        ]
+      },
+      "CoinWithPairs": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Base or quote asset symbol (e.g. BTC, USD).",
+            "example": "BTC"
+          },
+          "availablePairs": {
+            "description": "All pairs (Products) where this asset appears.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Product"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "availablePairs"
+        ]
+      },
+      "TradingCandleDto": {
+        "type": "object",
+        "properties": {
+          "start": {
+            "type": "string",
+            "description": "Candle start (ISO 8601 or unix seconds, see source).",
+            "example": "2026-05-15T00:00:00Z"
+          },
+          "open": {
+            "type": "string",
+            "description": "Opening price of the period (quote currency).",
+            "example": "67120.55"
+          },
+          "high": {
+            "type": "string",
+            "description": "Highest traded price during the period.",
+            "example": "67890.40"
+          },
+          "low": {
+            "type": "string",
+            "description": "Lowest traded price during the period.",
+            "example": "66980.10"
+          },
+          "close": {
+            "type": "string",
+            "description": "Closing price of the period.",
+            "example": "67432.18"
+          },
+          "volume": {
+            "type": "string",
+            "description": "Total traded volume during the period (base currency).",
+            "example": "1284.532"
+          }
+        },
+        "required": [
+          "start"
+        ]
+      },
+      "Asset": {
+        "type": "object",
+        "properties": {
+          "createdAt": {
+            "type": "string",
+            "description": "Row creation timestamp (ISO 8601).",
+            "format": "date-time",
+            "example": "2026-03-12T09:21:44.000Z"
+          },
+          "updatedAt": {
+            "type": "string",
+            "description": "Row last-update timestamp (ISO 8601).",
+            "format": "date-time",
+            "example": "2026-05-08T14:03:11.000Z"
+          },
+          "id": {
+            "type": "string",
+            "description": "Internal UUID of the asset.",
+            "example": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+          },
+          "name": {
+            "type": "string",
+            "description": "Long-form asset name (e.g. Bitcoin).",
+            "example": "Bitcoin"
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Asset symbol (e.g. BTC).",
+            "example": "BTC"
+          },
+          "tradingSupported": {
+            "type": "boolean",
+            "description": "Whether this asset can be traded.",
+            "example": true
+          },
+          "explorerUrl": {
+            "type": "string",
+            "description": "URL pattern for an on-chain block explorer.",
+            "example": "https://www.blockchain.com/explorer/addresses/btc/{address}"
+          },
+          "xenios_available": {
+            "type": "boolean",
+            "description": "Whether the Xenios platform currently lists this asset.",
+            "default": false,
+            "example": true
+          }
+        },
+        "required": [
+          "name",
+          "symbol",
+          "tradingSupported",
+          "explorerUrl"
+        ]
+      },
+      "FeesResponse": {
+        "type": "object",
+        "properties": {
+          "markupPercent": {
+            "type": "number",
+            "description": "Effective trading fee (markup) applied to the caller’s fills, as a percent. Example: 0.30 means 0.30%.",
+            "example": 0.3
+          }
+        },
+        "required": [
+          "markupPercent"
+        ]
+      },
+      "ProductRule": {
+        "type": "object",
+        "properties": {
+          "productId": {
+            "type": "string",
+            "description": "Trading pair id.",
+            "example": "BTC-USD"
+          },
+          "base": {
+            "type": "string",
+            "description": "Base asset symbol.",
+            "example": "BTC"
+          },
+          "quote": {
+            "type": "string",
+            "description": "Quote asset symbol.",
+            "example": "USD"
+          },
+          "quoteCurrency": {
+            "type": "string",
+            "description": "Currency the order-value limits are expressed in.",
+            "example": "USD"
+          },
+          "minOrderSize": {
+            "type": "object",
+            "description": "Minimum order value in the quote currency. Null = no minimum (Coinbase floor applies).",
+            "nullable": true,
+            "example": "10"
+          },
+          "maxOrderSize": {
+            "type": "object",
+            "description": "Maximum order value in the quote currency. Null = no maximum (Coinbase ceiling applies).",
+            "nullable": true,
+            "example": "100000"
+          }
+        },
+        "required": [
+          "productId",
+          "base",
+          "quote",
+          "quoteCurrency"
+        ]
+      },
+      "ClientSettingsResponse": {
+        "type": "object",
+        "properties": {
+          "markupPercent": {
+            "type": "number",
+            "description": "Effective trading fee (markup) as a percent.",
+            "example": 0.3
+          },
+          "restricted": {
+            "type": "boolean",
+            "description": "True when a product whitelist is in effect (the products below are the only ones tradable). False = unrestricted (the products below are all enabled products).",
+            "example": false
+          },
+          "products": {
+            "description": "The products the caller may trade, each with its effective order-value limits.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProductRule"
+            }
+          }
+        },
+        "required": [
+          "markupPercent",
+          "restricted",
+          "products"
+        ]
+      }
+    }
+  },
+  "security": [
+    {
+      "xenios-hmac": []
+    }
+  ]
+}
